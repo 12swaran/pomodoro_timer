@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initialState, reducer, advance, remaining, localDay } from '../src/timer.js';
+import { initialState, reducer, advance, remaining, localDay, startOfLocalDay, addDays } from '../src/timer.js';
 import { createBrowserStorage, STORAGE_KEY } from '../src/storage.js';
 const start = (s, now = 1000, id = 's1') => reducer(s, { type: 'start', now, id });
 test('deadline countdown, pause, and resume preserve remaining time', () => {
@@ -118,4 +118,20 @@ test('unavailable storage and malformed saved data recover safely', () => {
   assert.equal(store.load().state.timer.status, 'idle');
   mem.setItem(STORAGE_KEY, JSON.stringify({ version: 1, state: { ...initialState(), timer: { mode: 'oops' } } }));
   assert.ok(store.load().notice);
+});
+test('startOfLocalDay returns midnight local time', () => {
+  const d = new Date(2026, 1, 15, 14, 30, 45); // Feb 15, 2026, 14:30:45
+  const start = new Date(startOfLocalDay(d.getTime()));
+  assert.equal(start.getHours(), 0);
+  assert.equal(start.getMinutes(), 0);
+  assert.equal(start.getSeconds(), 0);
+  assert.equal(start.getDate(), 15);
+});
+test('addDays adds positive and negative days correctly', () => {
+  const d = new Date(2026, 0, 1, 10, 0, 0).getTime(); // Jan 1, 2026
+  const nextWeek = addDays(d, 7);
+  const lastWeek = addDays(d, -7);
+  assert.equal(new Date(nextWeek).getDate(), 8);
+  assert.equal(new Date(lastWeek).getDate(), 25);
+  assert.equal(new Date(lastWeek).getMonth(), 11); // December previous year
 });

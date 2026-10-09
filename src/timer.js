@@ -14,6 +14,16 @@ export function localDay(timestamp) {
   const d = new Date(timestamp);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+export function startOfLocalDay(timestamp) {
+  const d = new Date(timestamp);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+export function addDays(timestamp, days) {
+  const d = new Date(timestamp);
+  d.setDate(d.getDate() + days);
+  return d.getTime();
+}
 export function advance(state, now = Date.now()) {
   const t = state.timer;
   if (t.status !== 'running' || t.deadline > now) return state;

@@ -1,28 +1,53 @@
-import React, { useEffect, useReducer, useRef, useState } from 'react';
-import { BookOpen, GearSix, Play, Pause, ArrowCounterClockwise, SkipForward, Plus, Check, PencilSimple, Trash, X, SpeakerHigh, SpeakerSlash, Circle, CheckCircle, ArrowsIn, ArrowsOut, Drop, Tree, Coffee, Campfire, Waves, Stop } from '@phosphor-icons/react';
-import { defaults, labels, localDay, reducer, remaining } from './timer.js';
+import React, { useEffect, useReducer, useRef, useState, useMemo } from 'react';
+import { BookOpen, GearSix, Play, Pause, ArrowCounterClockwise, SkipForward, Plus, Check, PencilSimple, Trash, X, SpeakerHigh, SpeakerSlash, Circle, CheckCircle, ArrowsIn, ArrowsOut, Drop, Tree, Coffee, Campfire, Waves, Stop, ChartBar, Plant } from '@phosphor-icons/react';
+import { defaults, labels, localDay, startOfLocalDay, addDays, reducer, remaining } from './timer.js';
 import { createBrowserStorage } from './storage.js';
 
 const storage = createBrowserStorage();
 const uid = () => crypto.randomUUID();
 
 function useAmbience(type, volume, isPlaying) {
-  const ctx = useRef(null);
-  const engine = useRef(null);
+  const ctxRef = useRef(null);
+  const engineRef = useRef(null);
+
   useEffect(() => {
     if (!isPlaying || type === 'off') {
-      if (engine.current) { engine.current.source.stop(); engine.current.source.disconnect(); engine.current = null; }
+      if (engineRef.current) { 
+        try { engineRef.current.gain.gain.linearRampToValueAtTime(0, ctxRef.current.currentTime + 0.1); } catch(e){}
+        setTimeout(() => {
+          if (engineRef.current) {
+            try { engineRef.current.source.stop(); } catch(e){}
+            engineRef.current.source.disconnect(); 
+            engineRef.current.gain.disconnect();
+            engineRef.current = null;
+          }
+        }, 150);
+      }
       return;
     }
-    if (!ctx.current) {
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      if (AudioContext) ctx.current = new AudioContext();
+    
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!ctxRef.current && AudioContext) {
+      ctxRef.current = new AudioContext();
     }
-    if (!ctx.current) return;
-    if (ctx.current.state === 'suspended') ctx.current.resume().catch(()=>{});
+    if (!ctxRef.current) return;
+    
+    if (ctxRef.current.state === 'suspended') {
+      ctxRef.current.resume().catch(() => {});
+    }
 
-    const bufferSize = ctx.current.sampleRate * 2;
-    const buffer = ctx.current.createBuffer(1, bufferSize, ctx.current.sampleRate);
+    if (engineRef.current && engineRef.current.type === type) {
+      return;
+    }
+
+    if (engineRef.current) {
+      try { engineRef.current.source.stop(); } catch(e){}
+      engineRef.current.source.disconnect();
+      engineRef.current.gain.disconnect();
+    }
+
+    const bufferSize = ctxRef.current.sampleRate * 2;
+    const buffer = ctxRef.current.createBuffer(1, bufferSize, ctxRef.current.sampleRate);
     const data = buffer.getChannelData(0);
     let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
     for (let i = 0; i < bufferSize; i++) {
@@ -36,36 +61,51 @@ function useAmbience(type, volume, isPlaying) {
         data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
     }
     
-    const noise = ctx.current.createBufferSource();
+    const noise = ctxRef.current.createBufferSource();
     noise.buffer = buffer;
     noise.loop = true;
     
-    const filter = ctx.current.createBiquadFilter();
+    const filter = ctxRef.current.createBiquadFilter();
     if (type === 'rain') { filter.type = 'lowpass'; filter.frequency.value = 1200; }
     else if (type === 'fireplace') { filter.type = 'lowpass'; filter.frequency.value = 400; }
     else if (type === 'forest') { filter.type = 'bandpass'; filter.frequency.value = 2500; filter.Q.value = 0.5; }
     else if (type === 'cafe') { filter.type = 'lowpass'; filter.frequency.value = 800; filter.Q.value = 0.5; }
     else { filter.type = 'lowpass'; filter.frequency.value = 1000; }
     
-    const gain = ctx.current.createGain();
-    gain.gain.value = (volume / 100) * 0.8;
+    const gain = ctxRef.current.createGain();
+    const vol = (volume / 100) * 0.8;
+    gain.gain.value = 0;
+    gain.gain.linearRampToValueAtTime(vol, ctxRef.current.currentTime + 0.1);
     
     noise.connect(filter);
     filter.connect(gain);
-    gain.connect(ctx.current.destination);
+    gain.connect(ctxRef.current.destination);
     noise.start();
-    engine.current = { source: noise, gain };
     
-    return () => {
-      if (engine.current) { engine.current.source.stop(); engine.current.source.disconnect(); engine.current = null; }
-    };
+    engineRef.current = { type, source: noise, gain };
+
   }, [type, isPlaying]);
 
   useEffect(() => {
-    if (engine.current && ctx.current) {
-      engine.current.gain.gain.setValueAtTime((volume / 100) * 0.8, ctx.current.currentTime);
+    if (engineRef.current && ctxRef.current && isPlaying) {
+      engineRef.current.gain.gain.linearRampToValueAtTime((volume / 100) * 0.8, ctxRef.current.currentTime + 0.1);
     }
-  }, [volume]);
+  }, [volume, isPlaying]);
+
+  useEffect(() => {
+    return () => {
+      if (engineRef.current) {
+        try { engineRef.current.source.stop(); } catch(e){}
+        engineRef.current.source.disconnect();
+        engineRef.current.gain.disconnect();
+        engineRef.current = null;
+      }
+      if (ctxRef.current && ctxRef.current.state !== 'closed') {
+        ctxRef.current.close().catch(()=>{});
+        ctxRef.current = null;
+      }
+    };
+  }, []);
 }
 
 function AmbienceControls({ settings, dispatch, playing, setPlaying }) {
@@ -77,7 +117,7 @@ function AmbienceControls({ settings, dispatch, playing, setPlaying }) {
     { id: 'fireplace', label: 'Fire', icon: Campfire },
     { id: 'soft', label: 'Noise', icon: Waves },
   ];
-  return <div className="ambience-controls">
+  return <div className="ambience-controls" role="region" aria-label="Ambience controls">
     <div className="ambience-toggles" role="group" aria-label="Ambience sounds">
       {options.map(opt => {
         const Icon = opt.icon;
@@ -94,55 +134,81 @@ function AmbienceControls({ settings, dispatch, playing, setPlaying }) {
   </div>;
 }
 
-function Heatmap({ sessions }) {
-  const today = new Date();
-  today.setHours(0,0,0,0);
+function getStats(sessions, now) {
+  const todayKey = localDay(now);
+  const startOfToday = startOfLocalDay(now);
+  const grouped = {};
+  sessions.forEach(s => {
+    const k = localDay(s.completedAt);
+    if (!grouped[k]) grouped[k] = { count: 0, mins: 0 };
+    grouped[k].count++;
+    grouped[k].mins += s.minutes;
+  });
+  const todayStats = grouped[todayKey] || { count: 0, mins: 0 };
+  let weekMins = 0;
+  for (let i = 0; i < 7; i++) {
+    const k = localDay(addDays(startOfToday, -i));
+    if (grouped[k]) weekMins += grouped[k].mins;
+  }
+  let streak = 0;
+  for (let i = 0; i < 365; i++) {
+    const k = localDay(addDays(startOfToday, -i));
+    if (grouped[k]) streak++;
+    else if (i > 0) break; 
+  }
+  return { todayStats, weekMins, streak, grouped, startOfToday };
+}
+
+function Heatmap({ grouped, startOfToday }) {
   const days = [];
   for (let i = 83; i >= 0; i--) {
-    const d = new Date(today.getTime() - i * 86400000);
-    days.push({ date: localDay(d.getTime()), count: 0, mins: 0 });
+    const ts = addDays(startOfToday, -i);
+    const k = localDay(ts);
+    const count = grouped[k] ? grouped[k].count : 0;
+    const mins = grouped[k] ? grouped[k].mins : 0;
+    days.push({ key: k, ts, count, mins });
   }
-  sessions.forEach(s => {
-    const lDay = localDay(s.completedAt);
-    const day = days.find(d => d.date === lDay);
-    if (day) { day.count++; day.mins += s.minutes; }
-  });
+  const weeks = [];
+  for (let i = 0; i < days.length; i += 7) {
+    weeks.push(days.slice(i, i + 7));
+  }
   return <div className="heatmap-container">
-    <div className="heatmap-header"><span className="eyebrow">CONSISTENCY</span><h3>Activity</h3></div>
-    <div className="heatmap-grid" aria-label="Activity over last 12 weeks">
-      {days.map(d => (
-        <div key={d.date} className={`heatmap-cell intensity-${Math.min(4, d.count)}`} title={`${d.date}: ${d.count} sessions, ${Math.round(d.mins)} mins`} />
+    <div className="heatmap-grid" aria-label="Activity over last 12 weeks" role="grid">
+      {weeks.map((week, wi) => (
+        <div key={wi} className="heatmap-column" role="row">
+          {week.map(d => (
+            <div key={d.key} 
+                 className={`heatmap-cell intensity-${Math.min(4, d.count)}`} 
+                 title={`${d.key}: ${d.count} sessions, ${Math.round(d.mins)} mins`} 
+                 aria-label={`${d.key}: ${d.count} sessions`} 
+                 role="gridcell" tabIndex="0" />
+          ))}
+        </div>
       ))}
+    </div>
+    <div className="heatmap-legend" aria-hidden="true">
+      <span>Less</span>
+      <div className="heatmap-cell intensity-0"></div>
+      <div className="heatmap-cell intensity-1"></div>
+      <div className="heatmap-cell intensity-2"></div>
+      <div className="heatmap-cell intensity-3"></div>
+      <div className="heatmap-cell intensity-4"></div>
+      <span>More</span>
     </div>
   </div>;
 }
 
-function Analytics({ sessions }) {
-  const now = Date.now();
-  const todayL = localDay(now);
-  const todaySessions = sessions.filter(s => localDay(s.completedAt) === todayL);
-  const todayMins = Math.round(todaySessions.reduce((sum, s) => sum + s.minutes, 0));
-  const weekSessions = sessions.filter(s => s.completedAt > now - 7 * 86400000);
-  const weekMins = Math.round(weekSessions.reduce((sum, s) => sum + s.minutes, 0));
-
-  let currentStreak = 0;
-  let checkDate = new Date(now);
-  while(true) {
-    const lDay = localDay(checkDate.getTime());
-    const has = sessions.some(s => localDay(s.completedAt) === lDay);
-    if (has) { currentStreak++; }
-    else if (currentStreak > 0 || checkDate.getTime() < now - 86400000) { break; }
-    checkDate = new Date(checkDate.getTime() - 86400000);
-  }
-
+function Analytics({ sessions, now }) {
+  const { todayStats, weekMins, streak, grouped, startOfToday } = useMemo(() => getStats(sessions, now), [sessions, now]);
   return <section className="analytics-panel" aria-label="Progress analytics">
+    <div className="section-header"><ChartBar size={20} className="section-icon"/><h2>Analytics</h2></div>
     <div className="analytics-stats">
-      <div className="stat"><strong>{todaySessions.length}</strong><span>Sessions Today</span></div>
-      <div className="stat"><strong>{todayMins}m</strong><span>Time Today</span></div>
-      <div className="stat"><strong>{weekMins}m</strong><span>This Week</span></div>
-      <div className="stat"><strong>{currentStreak}</strong><span>Day Streak</span></div>
+      <div className="stat"><strong>{todayStats.count}</strong><span>Sessions Today</span></div>
+      <div className="stat"><strong>{Math.round(todayStats.mins)}m</strong><span>Time Today</span></div>
+      <div className="stat"><strong>{Math.round(weekMins)}m</strong><span>Last 7 Days</span></div>
+      <div className="stat"><strong>{streak}</strong><span>Day Streak</span></div>
     </div>
-    <Heatmap sessions={sessions} />
+    <Heatmap grouped={grouped} startOfToday={startOfToday} />
   </section>;
 }
 
@@ -152,11 +218,11 @@ function Garden({ sessions }) {
   if (count >= 1) { stage = 1; msg = "Sprouting gently"; }
   if (count >= 5) { stage = 2; msg = "Growing leaves"; }
   if (count >= 15) { stage = 3; msg = "Flourishing plant"; }
-  if (count >= 30) { stage = 4; msg = "A beautiful garden"; }
+  if (count >= 30) { stage = 4; msg = "A beautiful mature garden"; }
 
   return <section className="garden-panel" aria-label="Focus garden">
-    <div className="garden-header"><span className="eyebrow">YOUR GARDEN</span><h3>Growth</h3></div>
-    <div className={`garden-illustration stage-${stage}`}>
+    <div className="section-header"><Plant size={20} className="section-icon"/><h2>Garden</h2></div>
+    <div className={`garden-illustration stage-${stage}`} aria-hidden="true">
       <div className="plant-pot"></div>
       {stage >= 1 && <div className="plant-stem"></div>}
       {stage >= 2 && <div className="plant-leaf leaf-left"></div>}
@@ -165,6 +231,21 @@ function Garden({ sessions }) {
     </div>
     <div className="garden-status">{msg}</div>
   </section>;
+}
+
+function ProgressRing({ left, total, status }) {
+  const circumference = 2 * Math.PI * 140;
+  const progress = status === 'idle' ? 0 : 1 - (left / Math.max(1, total));
+  const strokeDashoffset = circumference - progress * circumference;
+  return <div className="timer-ring">
+    <svg width="100%" height="100%" viewBox="0 0 300 300" aria-hidden="true">
+      <circle cx="150" cy="150" r="140" className="ring-bg" />
+      <circle cx="150" cy="150" r="140" className="ring-progress" 
+              strokeDasharray={circumference} 
+              strokeDashoffset={strokeDashoffset} 
+              transform="rotate(-90 150 150)"/>
+    </svg>
+  </div>;
 }
 
 function Settings({ settings, onSave, onClose }) {
@@ -202,8 +283,8 @@ function Settings({ settings, onSave, onClose }) {
         ))}
       </div>
       <div className="theme-selector-group">
-        <label className="theme-label">Visual Theme</label>
-        <select className="theme-select" value={draft.theme} onChange={e => setDraft({ ...draft, theme: e.target.value })}>
+        <label className="theme-label" htmlFor="theme-select">Visual Theme</label>
+        <select id="theme-select" className="theme-select" value={draft.theme} onChange={e => setDraft({ ...draft, theme: e.target.value })}>
           <option value="botanical">Warm Botanical</option>
           <option value="midnight">Midnight Forest</option>
           <option value="paper">Warm Paper</option>
@@ -239,6 +320,7 @@ export default function App() {
   useEffect(() => {
     if (!storage.save(state)) setNotice('Browser saving is unavailable. Your changes will last until this page closes.');
   }, [state]);
+  
   useEffect(() => {
     function tick() { const time = Date.now(); setNow(time); dispatch({ type: 'tick', now: time }); }
     const interval = setInterval(tick, 250);
@@ -246,6 +328,7 @@ export default function App() {
     window.addEventListener('focus', tick);
     return () => { clearInterval(interval); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
   }, []);
+  
   useEffect(() => {
     const old = previous.current;
     if (old.timer.status === 'running' && old.timer.deadline <= Date.now() && old.timer.sessionId !== state.timer.sessionId) {
@@ -262,6 +345,12 @@ export default function App() {
     }
     previous.current = state;
   }, [state]);
+
+  useEffect(() => {
+    const handleKey = e => { if (e.key === 'Escape' && focusMode) setFocusMode(false); };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [focusMode]);
 
   function start() {
     try { const AudioContext = window.AudioContext || window.webkitAudioContext; if (!audio.current && AudioContext) audio.current = new AudioContext(); audio.current?.resume().catch(() => {}); } catch { /* The timer still works without audio. */ }
@@ -298,7 +387,6 @@ export default function App() {
       <div className="intro">
         <span className="eyebrow">A MOMENT FOR YOURSELF</span>
         <h1>One thing at a time.</h1>
-        <p>Make a little space for what matters today.</p>
       </div>
       {notice && <p className="storage-notice" role="status">{notice}</p>}
       <div className="workspace">
@@ -306,22 +394,25 @@ export default function App() {
           <div className="mode-tabs" role="group" aria-label="Timer phase">
             {Object.entries(labels).map(([mode, label]) => <button key={mode} aria-pressed={t.mode === mode} disabled={t.status !== 'idle' && mode !== t.mode} onClick={() => { dispatch({ type: 'mode', mode }); setAnnouncement(`${label} ready.`); }}>{label}</button>)}
           </div>
-          <div className="timer-content">
-            <span className="phase-caption">{t.mode === 'focus' ? 'TIME TO FOCUS' : t.mode === 'short' ? 'A MOMENT TO RESET' : 'TIME TO RECHARGE'}</span>
-            <div className="time-display" role="timer" aria-label={`${Math.floor(seconds / 60)} minutes ${seconds % 60} seconds remaining`}>{timeText}</div>
-            <p className="timer-message">{t.status === 'paused' ? 'Paused. Pick up whenever you\'re ready.' : t.mode === 'focus' ? 'Settle in and find your flow.' : t.mode === 'short' ? 'Stand up, stretch, take a breath.' : 'Step away. You\'ve earned a longer rest.'}</p>
-            <div className="timer-controls">
-              <button className="icon-button" title="Reset current phase" aria-label="Reset current phase" onClick={() => { dispatch({ type: 'reset' }); setAnnouncement('Timer reset.'); }}><ArrowCounterClockwise size={24}/></button>
-              <button className="primary-button start-button" onClick={t.status === 'running' ? () => { dispatch({ type: 'pause' }); setAnnouncement('Timer paused.'); } : start}>
-                {t.status === 'running' ? <Pause size={20} weight="fill"/> : <Play size={20} weight="fill"/>}
-                {t.status === 'running' ? 'Pause' : t.status === 'paused' ? 'Resume' : t.mode === 'focus' ? 'Start focusing' : 'Start break'}
-              </button>
-              <button className="icon-button" title="Skip current phase" aria-label="Skip current phase" onClick={() => { dispatch({ type: 'skip' }); setAnnouncement('Phase skipped. The next phase is ready.'); }}><SkipForward size={24}/></button>
+          <div className="timer-content-wrapper">
+            <ProgressRing left={left} total={t.total} status={t.status} />
+            <div className="timer-content">
+              <span className="phase-caption">{t.mode === 'focus' ? 'TIME TO FOCUS' : t.mode === 'short' ? 'A MOMENT TO RESET' : 'TIME TO RECHARGE'}</span>
+              <div className="time-display" role="timer" aria-label={`${Math.floor(seconds / 60)} minutes ${seconds % 60} seconds remaining`}>{timeText}</div>
+              <p className="timer-message">{t.status === 'paused' ? 'Paused. Pick up whenever you\'re ready.' : t.mode === 'focus' ? 'Settle in and find your flow.' : t.mode === 'short' ? 'Stand up, stretch, take a breath.' : 'Step away. You\'ve earned a longer rest.'}</p>
             </div>
-            <div className="cycle-indicator" aria-label={`${state.cycle % 4} of 4 sessions toward a long break`}>
-              {[0,1,2,3].map(i => <span key={i} className={i < state.cycle % 4 ? 'filled' : ''}><Circle size={10} weight={i < state.cycle % 4 ? 'fill' : 'regular'}/></span>)}
-              <span className="cycle-label">long break after 4 sessions</span>
-            </div>
+          </div>
+          <div className="timer-controls">
+            <button className="icon-button" title="Reset current phase" aria-label="Reset current phase" onClick={() => { dispatch({ type: 'reset' }); setAnnouncement('Timer reset.'); }}><ArrowCounterClockwise size={24}/></button>
+            <button className="primary-button start-button" onClick={t.status === 'running' ? () => { dispatch({ type: 'pause' }); setAnnouncement('Timer paused.'); } : start}>
+              {t.status === 'running' ? <Pause size={20} weight="fill"/> : <Play size={20} weight="fill"/>}
+              {t.status === 'running' ? 'Pause' : t.status === 'paused' ? 'Resume' : t.mode === 'focus' ? 'Start focusing' : 'Start break'}
+            </button>
+            <button className="icon-button" title="Skip current phase" aria-label="Skip current phase" onClick={() => { dispatch({ type: 'skip' }); setAnnouncement('Phase skipped. The next phase is ready.'); }}><SkipForward size={24}/></button>
+          </div>
+          <div className="cycle-indicator" aria-label={`${state.cycle % 4} of 4 sessions toward a long break`}>
+            {[0,1,2,3].map(i => <span key={i} className={i < state.cycle % 4 ? 'filled' : ''}><Circle size={10} weight={i < state.cycle % 4 ? 'fill' : 'regular'}/></span>)}
+            <span className="cycle-label">long break after 4 sessions</span>
           </div>
           <div className="timer-bottom">
             <span className="focus-label">
@@ -394,7 +485,7 @@ export default function App() {
       </div>
       
       <div className="secondary-workspace">
-        <Analytics sessions={state.sessions} />
+        <Analytics sessions={state.sessions} now={now} />
         <Garden sessions={state.sessions} />
       </div>
 
