@@ -1,4 +1,4 @@
-export const defaults = { focus: 25, short: 5, long: 15, muted: false };
+export const defaults = { focus: 25, short: 5, long: 15, muted: false, theme: 'botanical', ambience: 'off', volume: 50 };
 export const labels = { focus: 'Focus', short: 'Short break', long: 'Long break' };
 export const duration = (settings, mode) => settings[mode] * 60_000;
 export function idleTimer(settings, mode = 'focus') {

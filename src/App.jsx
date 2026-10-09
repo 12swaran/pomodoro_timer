@@ -1,10 +1,171 @@
 import React, { useEffect, useReducer, useRef, useState } from 'react';
-import { BookOpen, GearSix, Play, Pause, ArrowCounterClockwise, SkipForward, Plus, Check, PencilSimple, Trash, X, SpeakerHigh, SpeakerSlash, Circle, CheckCircle } from '@phosphor-icons/react';
+import { BookOpen, GearSix, Play, Pause, ArrowCounterClockwise, SkipForward, Plus, Check, PencilSimple, Trash, X, SpeakerHigh, SpeakerSlash, Circle, CheckCircle, ArrowsIn, ArrowsOut, Drop, Tree, Coffee, Campfire, Waves, Stop } from '@phosphor-icons/react';
 import { defaults, labels, localDay, reducer, remaining } from './timer.js';
 import { createBrowserStorage } from './storage.js';
 
 const storage = createBrowserStorage();
 const uid = () => crypto.randomUUID();
+
+function useAmbience(type, volume, isPlaying) {
+  const ctx = useRef(null);
+  const engine = useRef(null);
+  useEffect(() => {
+    if (!isPlaying || type === 'off') {
+      if (engine.current) { engine.current.source.stop(); engine.current.source.disconnect(); engine.current = null; }
+      return;
+    }
+    if (!ctx.current) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (AudioContext) ctx.current = new AudioContext();
+    }
+    if (!ctx.current) return;
+    if (ctx.current.state === 'suspended') ctx.current.resume().catch(()=>{});
+
+    const bufferSize = ctx.current.sampleRate * 2;
+    const buffer = ctx.current.createBuffer(1, bufferSize, ctx.current.sampleRate);
+    const data = buffer.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < bufferSize; i++) {
+        let white = Math.random() * 2 - 1;
+        b0 = 0.99886 * b0 + white * 0.0555179;
+        b1 = 0.99332 * b1 + white * 0.0750759;
+        b2 = 0.96900 * b2 + white * 0.1538520;
+        b3 = 0.86650 * b3 + white * 0.3104856;
+        b4 = 0.55000 * b4 + white * 0.5329522;
+        b5 = -0.7616 * b5 - white * 0.0168980;
+        data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
+    }
+    
+    const noise = ctx.current.createBufferSource();
+    noise.buffer = buffer;
+    noise.loop = true;
+    
+    const filter = ctx.current.createBiquadFilter();
+    if (type === 'rain') { filter.type = 'lowpass'; filter.frequency.value = 1200; }
+    else if (type === 'fireplace') { filter.type = 'lowpass'; filter.frequency.value = 400; }
+    else if (type === 'forest') { filter.type = 'bandpass'; filter.frequency.value = 2500; filter.Q.value = 0.5; }
+    else if (type === 'cafe') { filter.type = 'lowpass'; filter.frequency.value = 800; filter.Q.value = 0.5; }
+    else { filter.type = 'lowpass'; filter.frequency.value = 1000; }
+    
+    const gain = ctx.current.createGain();
+    gain.gain.value = (volume / 100) * 0.8;
+    
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.current.destination);
+    noise.start();
+    engine.current = { source: noise, gain };
+    
+    return () => {
+      if (engine.current) { engine.current.source.stop(); engine.current.source.disconnect(); engine.current = null; }
+    };
+  }, [type, isPlaying]);
+
+  useEffect(() => {
+    if (engine.current && ctx.current) {
+      engine.current.gain.gain.setValueAtTime((volume / 100) * 0.8, ctx.current.currentTime);
+    }
+  }, [volume]);
+}
+
+function AmbienceControls({ settings, dispatch, playing, setPlaying }) {
+  const options = [
+    { id: 'off', label: 'Off', icon: SpeakerSlash },
+    { id: 'rain', label: 'Rain', icon: Drop },
+    { id: 'forest', label: 'Forest', icon: Tree },
+    { id: 'cafe', label: 'Café', icon: Coffee },
+    { id: 'fireplace', label: 'Fire', icon: Campfire },
+    { id: 'soft', label: 'Noise', icon: Waves },
+  ];
+  return <div className="ambience-controls">
+    <div className="ambience-toggles" role="group" aria-label="Ambience sounds">
+      {options.map(opt => {
+        const Icon = opt.icon;
+        return <button key={opt.id} aria-pressed={settings.ambience === opt.id} onClick={() => {
+          dispatch({ type: 'settings', settings: { ...settings, ambience: opt.id } });
+          setPlaying(opt.id !== 'off');
+        }} title={opt.label} aria-label={opt.label}><Icon size={18}/></button>
+      })}
+    </div>
+    {settings.ambience !== 'off' && <div className="ambience-volume">
+      <button onClick={() => setPlaying(!playing)} aria-label={playing ? "Pause ambience" : "Play ambience"}>{playing ? <Stop size={16} weight="fill"/> : <Play size={16} weight="fill"/>}</button>
+      <input type="range" aria-label="Ambience volume" min="0" max="100" value={settings.volume} onChange={e => dispatch({ type: 'settings', settings: { ...settings, volume: parseInt(e.target.value, 10) } })} />
+    </div>}
+  </div>;
+}
+
+function Heatmap({ sessions }) {
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const days = [];
+  for (let i = 83; i >= 0; i--) {
+    const d = new Date(today.getTime() - i * 86400000);
+    days.push({ date: localDay(d.getTime()), count: 0, mins: 0 });
+  }
+  sessions.forEach(s => {
+    const lDay = localDay(s.completedAt);
+    const day = days.find(d => d.date === lDay);
+    if (day) { day.count++; day.mins += s.minutes; }
+  });
+  return <div className="heatmap-container">
+    <div className="heatmap-header"><span className="eyebrow">CONSISTENCY</span><h3>Activity</h3></div>
+    <div className="heatmap-grid" aria-label="Activity over last 12 weeks">
+      {days.map(d => (
+        <div key={d.date} className={`heatmap-cell intensity-${Math.min(4, d.count)}`} title={`${d.date}: ${d.count} sessions, ${Math.round(d.mins)} mins`} />
+      ))}
+    </div>
+  </div>;
+}
+
+function Analytics({ sessions }) {
+  const now = Date.now();
+  const todayL = localDay(now);
+  const todaySessions = sessions.filter(s => localDay(s.completedAt) === todayL);
+  const todayMins = Math.round(todaySessions.reduce((sum, s) => sum + s.minutes, 0));
+  const weekSessions = sessions.filter(s => s.completedAt > now - 7 * 86400000);
+  const weekMins = Math.round(weekSessions.reduce((sum, s) => sum + s.minutes, 0));
+
+  let currentStreak = 0;
+  let checkDate = new Date(now);
+  while(true) {
+    const lDay = localDay(checkDate.getTime());
+    const has = sessions.some(s => localDay(s.completedAt) === lDay);
+    if (has) { currentStreak++; }
+    else if (currentStreak > 0 || checkDate.getTime() < now - 86400000) { break; }
+    checkDate = new Date(checkDate.getTime() - 86400000);
+  }
+
+  return <section className="analytics-panel" aria-label="Progress analytics">
+    <div className="analytics-stats">
+      <div className="stat"><strong>{todaySessions.length}</strong><span>Sessions Today</span></div>
+      <div className="stat"><strong>{todayMins}m</strong><span>Time Today</span></div>
+      <div className="stat"><strong>{weekMins}m</strong><span>This Week</span></div>
+      <div className="stat"><strong>{currentStreak}</strong><span>Day Streak</span></div>
+    </div>
+    <Heatmap sessions={sessions} />
+  </section>;
+}
+
+function Garden({ sessions }) {
+  const count = sessions.length;
+  let stage = 0, msg = "A fresh seed";
+  if (count >= 1) { stage = 1; msg = "Sprouting gently"; }
+  if (count >= 5) { stage = 2; msg = "Growing leaves"; }
+  if (count >= 15) { stage = 3; msg = "Flourishing plant"; }
+  if (count >= 30) { stage = 4; msg = "A beautiful garden"; }
+
+  return <section className="garden-panel" aria-label="Focus garden">
+    <div className="garden-header"><span className="eyebrow">YOUR GARDEN</span><h3>Growth</h3></div>
+    <div className={`garden-illustration stage-${stage}`}>
+      <div className="plant-pot"></div>
+      {stage >= 1 && <div className="plant-stem"></div>}
+      {stage >= 2 && <div className="plant-leaf leaf-left"></div>}
+      {stage >= 3 && <div className="plant-leaf leaf-right"></div>}
+      {stage >= 4 && <div className="plant-flower"></div>}
+    </div>
+    <div className="garden-status">{msg}</div>
+  </section>;
+}
 
 function Settings({ settings, onSave, onClose }) {
   const dialog = useRef(null);
@@ -17,11 +178,8 @@ function Settings({ settings, onSave, onClose }) {
     const f = Number(draft.focus);
     const s = Number(draft.short);
     const l = Number(draft.long);
-    if (!Number.isInteger(f) || f < 1 || f > 180 || 
-        !Number.isInteger(s) || s < 1 || s > 180 || 
-        !Number.isInteger(l) || l < 1 || l > 180) {
-      setError('Durations must be whole numbers between 1 and 180.');
-      return;
+    if (!Number.isInteger(f) || f < 1 || f > 180 || !Number.isInteger(s) || s < 1 || s > 180 || !Number.isInteger(l) || l < 1 || l > 180) {
+      setError('Durations must be whole numbers between 1 and 180.'); return;
     }
     setError('');
     onSave({ ...draft, focus: f, short: s, long: l });
@@ -43,6 +201,14 @@ function Settings({ settings, onSave, onClose }) {
           </label>
         ))}
       </div>
+      <div className="theme-selector-group">
+        <label className="theme-label">Visual Theme</label>
+        <select className="theme-select" value={draft.theme} onChange={e => setDraft({ ...draft, theme: e.target.value })}>
+          <option value="botanical">Warm Botanical</option>
+          <option value="midnight">Midnight Forest</option>
+          <option value="paper">Warm Paper</option>
+        </select>
+      </div>
       <label className="sound-setting">
         <span className="sound-setting-label"><SpeakerHigh size={22}/> Play a gentle completion chime</span>
         <input type="checkbox" checked={!draft.muted} onChange={e => setDraft({ ...draft, muted: !e.target.checked })}/>
@@ -63,8 +229,12 @@ export default function App() {
   const [editing, setEditing] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [announcement, setAnnouncement] = useState('');
+  const [focusMode, setFocusMode] = useState(false);
+  const [ambiencePlaying, setAmbiencePlaying] = useState(false);
   const audio = useRef(null);
   const previous = useRef(state);
+
+  useAmbience(state.settings.ambience, state.settings.volume, ambiencePlaying);
 
   useEffect(() => {
     if (!storage.save(state)) setNotice('Browser saving is unavailable. Your changes will last until this page closes.');
@@ -98,24 +268,27 @@ export default function App() {
     setNow(Date.now()); dispatch({ type: 'start', id: uid() }); setAnnouncement(`${labels[state.timer.mode]} started.`);
   }
   function saveRename(id) { if (editTitle.trim()) dispatch({ type: 'rename', id, title: editTitle.trim() }); setEditing(null); }
+  
   const t = state.timer;
   const left = remaining(t, now);
   const seconds = Math.ceil(left / 1000);
   const timeText = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
-  const today = state.sessions.filter(s => localDay(s.completedAt) === localDay(now));
-  const minutes = Math.round(today.reduce((sum, s) => sum + s.minutes, 0));
   const focusedTask = state.tasks.find(task => task.id === (t.status === 'idle' ? state.selectedTaskId : t.taskId));
   const completed = state.tasks.filter(task => task.done).length;
+  
   useEffect(() => { document.title = t.status === 'running' ? `${timeText} · ${labels[t.mode]} · Little Study` : 'Little Study · One thing at a time'; }, [timeText, t.status, t.mode]);
 
-  return <div className="study-page">
+  return <div className={`study-page theme-${state.settings.theme} ${focusMode ? 'focus-mode-active' : ''}`}>
     <header className="site-header">
       <a className="brand" href="/" aria-label="Little Study home">
         <span className="brand-mark"><BookOpen weight="duotone" size={20}/></span>
         little study<span className="brand-period">.</span>
       </a>
       <div className="header-right">
-        <span className="header-note">Your space to focus</span>
+        <AmbienceControls settings={state.settings} dispatch={dispatch} playing={ambiencePlaying} setPlaying={setAmbiencePlaying} />
+        <button className="icon-button" aria-label={focusMode ? "Exit focus mode" : "Enter focus mode"} onClick={() => setFocusMode(!focusMode)}>
+          {focusMode ? <ArrowsIn size={20}/> : <ArrowsOut size={20}/>}
+        </button>
         <button className="settings-button" aria-label="Settings" onClick={() => setShowSettings(true)}>
           <GearSix size={20}/>
         </button>
@@ -220,19 +393,11 @@ export default function App() {
         </section>
       </div>
       
-      <section className="daily-progress" aria-label="Today's progress">
-        <div className="stat">
-          <strong>{today.length}</strong>
-          <span>Focus sessions completed</span>
-        </div>
-        <div className="stat">
-          <strong>{minutes} min</strong>
-          <span>Time well spent</span>
-        </div>
-        <div className="daily-message">
-          {today.length ? 'You\'re building momentum.' : 'Your first session is waiting.'}
-        </div>
-      </section>
+      <div className="secondary-workspace">
+        <Analytics sessions={state.sessions} />
+        <Garden sessions={state.sessions} />
+      </div>
+
       <p className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</p>
     </main>
     <footer><span>A gentler way to get things done.</span></footer>
